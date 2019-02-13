@@ -1,1 +1,3 @@
 # PyKakaoTalkText
+
+https://kimjh0.github.io/NoSQL-%EC%9D%84-%EC%82%AC%EC%9A%A9%ED%95%9C-%EC%B9%B4%EC%B9%B4%EC%98%A4%ED%86%A1-%EB%A9%94%EC%8B%9C%EC%A7%80-%EB%B6%84%EC%84%9D/
