@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from konlpy.tag import Okt
 import pymongo
@@ -16,20 +17,9 @@ def conn_db(address, database, collection):
 
 
 def get_datetime(msg):
-    try:
-        msg = msg.strip()
-        idx = msg.index('일')
-        sdate = msg[:idx + 1].strip()
-        stime = msg[idx + 1:].strip()
-        if stime[0:2] == '오전':
-            return datetime.strptime(sdate + ' AM ' + stime[3:], '%Y년 %m월 %d일 %p %I:%M')
-        if stime[0:2] == '오후':
-            return datetime.strptime(sdate + ' PM ' + stime[3:], '%Y년 %m월 %d일 %p %I:%M')
-
-        return None
-
-    except ValueError:
-        return None
+    msg = msg.strip()
+    idx = msg.index('요일')
+    return datetime.strptime(msg[:idx - 1].strip(), '%Y년 %m월 %d일')
 
 
 def make_bulk_data(bulk_data, date, name, msg):
@@ -62,8 +52,9 @@ def parse_talk(filepath, db_conn):
     f.seek(0, os.SEEK_SET)
 
     title = f.readline().strip()
-    export_date = f.readline().strip()
-    export_date = get_datetime(export_date[export_date.index(':') + 1:])
+    export_date = f.readline()
+    export_date = datetime.strptime(
+        export_date[export_date.index(':') + 1:].strip(), '%Y-%m-%d %H:%M:%S')
     start_date = None
     end_date = None
 
@@ -71,6 +62,9 @@ def parse_talk(filepath, db_conn):
     name = None
     msg = None
     bulk_data = list()
+
+    date_pattern = re.compile(r'^-{15} \d{4}년 \d{1,2}월 \d{1,2}일 \w요일 -{15}$')
+    msg_pattern = re.compile(r'\[(.*?)\] \[(.*?)\] (.*)')
 
     progress = 0
     while True:
@@ -89,42 +83,40 @@ def parse_talk(filepath, db_conn):
             db_conn.insert_many(bulk_data)
             bulk_data.clear()
 
-        try:
-            idx = line.index(',')
-            date = get_datetime(line[:idx])
-            if date is None:
-                raise ValueError
-
-            if start_date is None:
-                start_date = date
-            end_date = date
-
-            line = line[idx + 1:].strip()
-            idx = line.index(':')
-            name = line[:idx].strip()
-            msg = line[idx + 1:].strip()
-
-            make_bulk_data(bulk_data, date, name, msg)
-
-        except ValueError:
-            if date is None:
-                continue
-            if name is None:
-                continue
-
-            line = line.strip()
-            if len(line) < 1:
-                continue
-
-            if get_datetime(line) is not None:
-                continue
-
-            make_bulk_data(bulk_data, date, name, line)
+        if re.match(date_pattern, line):
+            date = get_datetime(line[15:len(line)-16])
             continue
+
+        msg_match = re.match(msg_pattern, line)
+        if msg_match:
+            if name is not None:
+                make_bulk_data(bulk_data, date, name, msg)
+
+            name = msg_match.group(1)
+            time = msg_match.group(2)
+            msg = msg_match.group(3)
+
+            am_pm, time_str = time.split()
+            hour_str, minute_str = time_str.split(":")
+
+            hour = int(hour_str)
+            if am_pm == "오후" and hour != 12:
+                hour += 12
+            elif am_pm == "오전" and hour == 12:
+                hour = 0
+
+            date = date.replace(hour=hour, minute=int(minute_str))
+        else:
+            msg += line
+
+        if start_date is None:
+            start_date = date
+        end_date = date
 
     f.close()
 
-    db_conn.insert_many(bulk_data)
+    if len(bulk_data) > 1:
+        db_conn.insert_many(bulk_data)
 
     print('title', title)
     print('start_date', start_date)
@@ -132,10 +124,10 @@ def parse_talk(filepath, db_conn):
     print('export_date', export_date)
 
 
-db_conn = conn_db('mongodb://192.168.50.152:27017', 'test', 'talk')
+db_conn = conn_db('mongodb://localhost:27017', 'test', 'talk')
 parse_talk('talk.txt', db_conn)
 
-## msg count by date
+# msg count by date
 print('날짜 순위')
 pipeline = [
     {
@@ -159,7 +151,7 @@ pipeline = [
 for i in db_conn.aggregate(pipeline):
     print(i)
 
-## msg count by hour
+# msg count by hour
 print('시간 순위')
 pipeline = [
     {
@@ -175,7 +167,7 @@ pipeline = [
 for i in db_conn.aggregate(pipeline):
     print(i)
 
-## msg count by name
+# msg count by name
 print('메시지 순위')
 pipeline = [
     {
@@ -191,7 +183,7 @@ pipeline = [
 for i in db_conn.aggregate(pipeline):
     print(i)
 
-## emoji count by name
+# emoji count by name
 print('이모티콘 순위')
 pipeline = [
     {
@@ -210,7 +202,7 @@ pipeline = [
 for i in db_conn.aggregate(pipeline):
     print(i)
 
-## pic count by name
+# pic count by name
 print('사진 순위')
 pipeline = [
     {
@@ -229,7 +221,7 @@ pipeline = [
 for i in db_conn.aggregate(pipeline):
     print(i)
 
-## word top
+# word top
 print('단어 순위')
 pipeline = [
     {
